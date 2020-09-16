@@ -15,8 +15,8 @@
 * Based on Arduino Nano board with Atmega328p chipset
 *
 * Module: Main.c
-* 06.08.2020
-* V1.0 first tested release
+* 16.09.2020
+* V1.1 integrated LDR measurement 
 */
 
 //Includes
@@ -26,6 +26,7 @@
 
 //Defines
 #define TRANSIONTIME  10 //Since system tick is about 100ms, this will give us a 1 second fade in or fade out duration
+#define HYSTERESIS 5	//Hysteresis for night time detection, will prevent flickering due to values near day / night border
 
 //Enumerations
 enum {idle, fadein, glow, fadeout}; //Status of light engine state machine
@@ -39,11 +40,16 @@ volatile uint8_t run = 0;
 volatile uint8_t lampmode = 0;
 volatile uint8_t checkpin = 0;
 volatile uint8_t debounce = 0;
+volatile uint8_t night = 0;
+volatile uint8_t switchingthreshold = 100;
 
 //Function declarations
 void init_ports(void);
 void init_timers(void);
 void init_interrupts(void);
+void init_adc(void);
+unsigned int adc_conversion(int channel);
+_Bool is_night(void);
 
 //Linearisation table for PWM brightness
 unsigned int helligkeit[128]={0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4,
@@ -109,14 +115,14 @@ void init_interrupts(void){
 
 
 ISR(INT0_vect){
-	if(status == idle){
+	if(status == idle && night){
 		status = fadein;
 	}
 	run = duration;
 }
 
 ISR(INT1_vect){
-	if(status == idle){
+	if(status == idle && night){
 		status = fadein;
 	}
 	run = duration;
@@ -129,6 +135,61 @@ ISR(PCINT0_vect){
 	}
 }
 
+// function name: init_adc()
+// configuration of ADC to read in values
+// of LDR on 1 channels PC0
+void init_adc(void){
+	ADMUX = (1<<REFS0) | (1<<ADLAR); //AVcc with external capacitor at AREF pin and justify left
+	ADCSRA = (1<<ADEN) | (1<<ADPS2) | (1<<ADPS1) | (1<<ADPS0); //Enable ADC and set prescaler to x128 = 125kHz
+	DIDR0 = (1<<ADC0D);  //Digital Input Disable for ADC0
+}
+
+
+// function name: adc_conversion()
+// call with ADC channel that shall be read out
+// switches MUX register according to channel,
+// waits for conversion to finish and
+// returns ADC value at selected channel
+// Will temporary stop interrupts
+unsigned int adc_conversion(int channel){
+	uint8_t temp;
+	cli();
+	temp = ADMUX & 0xF0;			//read current setting of ADMUX register and mask out lower bits
+	temp |= channel & 0x0F;			//overwrite lower bits with channel setting
+	ADMUX = temp;					//write combined values back into ADMUX register
+	ADCSRA |= (1<<ADSC);			//Start ADC conversion
+	while(!(ADCSRA&(1<<ADIF)));		//Wait for conversion to finish
+	ADCSRA|=(1<<ADIF);				//Clear interrupt flag
+	sei();
+	return ADCH;
+}
+
+// function name: is_night ()
+// Returns true if LDR is under threshold of sensitivity
+// Hysteresis on ADC values to prevent flickering at border values
+_Bool is_night(void)
+{
+	uint8_t LDR = 0;
+	
+	LDR = adc_conversion(0);
+	
+	if (switchingthreshold > HYSTERESIS )		//Hysteresis size
+	{
+		if (LDR > switchingthreshold)	//Only illuminate bed if it is dark enough
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else
+	{
+		return true;
+	}
+	
+}
 
 void togglelampmode(void){
 	if (checkpin)								//Debounce the lampmode switch and check if button is still pressed after some time
@@ -158,15 +219,17 @@ int main(void)
 {
 	//Local variables
 	uint8_t brightness = 0;
-	uint8_t stepwidth = 19;
+	uint8_t stepwidth = 5;
 
 	cli();
 	init_ports();
 	init_timers();
 	init_interrupts();
+	init_adc();
 	sei();
 	while (1)
 	{
+		night = is_night();
 		if(tick){				//Execute the state machine every 100ms
 			tick = 0;			//Reset the tick for the next 100ms
 			
