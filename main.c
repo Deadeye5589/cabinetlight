@@ -16,7 +16,7 @@
 *
 * Module: Main.c
 * 16.09.2020
-* V1.1 integrated LDR measurement 
+* V1.2 different brightness for lamp mode and night illumination 
 */
 
 //Includes
@@ -32,8 +32,13 @@
 enum {idle, fadein, glow, fadeout}; //Status of light engine state machine
 
 //Global variables
-volatile uint8_t duration = 50;
-volatile uint8_t brightnessmax = 127;
+uint8_t brightnessnight = 50;				//Brightness during illumination at night
+uint8_t brightnesslamp = 127;				//Brightness in lamp mode
+uint8_t stepwidth = 5;						//How fast fade in and fade out transitions are happening
+volatile uint8_t duration = 50;				//How long the illumination at night stays on after a motion trigger event
+volatile uint8_t brightnessmax = 127;		//Overall allowable brightness, limited to 128 levels for linearisation of LED brightness
+volatile uint8_t switchingthreshold = 100;	//Defines when it is dark enough to enable illumination
+volatile uint8_t brightnessrun = 0;
 volatile uint8_t tick = 0;
 volatile uint8_t status = 0;
 volatile uint8_t run = 0;
@@ -41,7 +46,7 @@ volatile uint8_t lampmode = 0;
 volatile uint8_t checkpin = 0;
 volatile uint8_t debounce = 0;
 volatile uint8_t night = 0;
-volatile uint8_t switchingthreshold = 100;
+
 
 //Function declarations
 void init_ports(void);
@@ -202,10 +207,12 @@ void togglelampmode(void){
 			if (!(PINB & (1<<PINB2)))			//Is the lampmode switch still pressed, than switch lampmode on or off
 			{
 				if (lampmode && status == glow){
+					brightnessrun = brightnessnight;
 					lampmode = 0;
 					run = 0;
 				}
 				else{
+					brightnessrun = brightnesslamp;
 					lampmode = 1;
 					run = duration;
 					status = fadein;
@@ -219,7 +226,6 @@ int main(void)
 {
 	//Local variables
 	uint8_t brightness = 0;
-	uint8_t stepwidth = 5;
 
 	cli();
 	init_ports();
@@ -236,13 +242,13 @@ int main(void)
 			//State machine for the left side
 			if(status == fadein)		//If we are in idle fade in to maximum brightness
 			{
-				if(brightness <= brightnessmax){	//Fade in as long as the current brightness is beneath the global brightness
+				if(brightness <= brightnessrun){	//Fade in as long as the current brightness is beneath the global brightness
 					brightness += stepwidth;	//Step width is calculated inside the setup routine
-					if(brightness > 127)		//Limit brightness to the size for of our Linearization array
-					brightness = 127;
+					if(brightness > brightnessmax)		//Limit brightness to the size for of our Linearization array
+					brightness = brightnessmax;
 					OCR0A = helligkeit[brightness];	//Set the PWM
 				}
-				if((brightness > brightnessmax) || (brightness == 127)) //The fade in is finished when we have reached the overall brightness or if we reach the end of the Linearization array
+				if((brightness > brightnessrun) || (brightness == brightnessmax)) //The fade in is finished when we have reached the overall brightness or if we reach the end of the Linearization array
 				status = glow;
 			}	
 			else if(status == glow){		//Now that we reached the desired brightness keep the lights on for the set duration
