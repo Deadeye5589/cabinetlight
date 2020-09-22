@@ -15,8 +15,11 @@
 * Based on Arduino Nano board with Atmega328p chipset
 *
 * Module: Main.c
-* 16.09.2020
-* V1.2 different brightness for lamp mode and night illumination 
+* 22.09.2020
+* V1.0 first tested release 
+* V1.1 added LDR support 
+* V1.3 different brightness for lamp mode and night illumination 
+* V1.3 bugfix brightness not initialized  
 */
 
 //Includes
@@ -35,7 +38,7 @@ enum {idle, fadein, glow, fadeout}; //Status of light engine state machine
 uint8_t brightnessnight = 50;				//Brightness during illumination at night
 uint8_t brightnesslamp = 127;				//Brightness in lamp mode
 uint8_t stepwidth = 5;						//How fast fade in and fade out transitions are happening
-volatile uint8_t duration = 50;				//How long the illumination at night stays on after a motion trigger event
+volatile uint8_t duration = 150;				//How long the illumination at night stays on after a motion trigger event
 volatile uint8_t brightnessmax = 127;		//Overall allowable brightness, limited to 128 levels for linearisation of LED brightness
 volatile uint8_t switchingthreshold = 100;	//Defines when it is dark enough to enable illumination
 volatile uint8_t brightnessrun = 0;
@@ -233,6 +236,9 @@ int main(void)
 	init_interrupts();
 	init_adc();
 	sei();
+	
+	brightnessrun = brightnessnight;
+	
 	while (1)
 	{
 		night = is_night();
